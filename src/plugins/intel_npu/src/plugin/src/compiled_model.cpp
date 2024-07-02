@@ -19,6 +19,7 @@
 #include "openvino/runtime/properties.hpp"
 #include "openvino/runtime/system_conf.hpp"
 #include "openvino/runtime/threading/executor_manager.hpp"
+#include "plugin.hpp"
 #include "transformations/utils/utils.hpp"
 
 namespace {
@@ -104,9 +105,28 @@ CompiledModel::CompiledModel(const std::shared_ptr<const ov::Model>& model,
 std::shared_ptr<ov::IAsyncInferRequest> CompiledModel::create_infer_request() const {
     OV_ITT_SCOPED_TASK(itt::domains::NPUPlugin, "CompiledModel::create_infer_request");
 
+    auto uesed_plugin = std::dynamic_pointer_cast<const Plugin>(get_plugin());
+    if (_device == nullptr || uesed_plugin->is_backends_empty()) {
+        if (_device == nullptr)
+            _logger.warning("device for inference is not found. Updating device ...");
+        // update backend.
+        uesed_plugin->update_BackendsAndMetrics(_config);
+        // update device
+        _device = uesed_plugin->update_device(_config);
+    }
+
+    if (_device == nullptr || uesed_plugin->is_backends_empty()) {
+        _logger.error("Can not initialize NPUbackend and device before inference, will lead to failure.");
+        OPENVINO_THROW("Can not create NPU backend!\nPlease make sure that the device is available. Only compilation and "
+                       "exports can be made.");
+    } else {
+        _logger.info("Backend and device are ready for inference.");
+    }
+
     if (_executorPtr == nullptr && _device != nullptr) {
         _executorPtr = _device->createExecutor(_networkPtr, _config);
     }
+
     if (_executorPtr == nullptr) {
         OPENVINO_THROW(NO_EXECUTOR_FOR_INFERENCE);
     }
